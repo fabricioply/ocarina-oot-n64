@@ -1,0 +1,13 @@
+{
+  "shipwright": {
+    "url": "https://github.com/HarbourMasters/Shipwright",
+    "version": "9.3.1",
+    "commit": "f0599f96f8d442f26d0fa1c5cedafddacd56633f"
+  },
+  "libultraship": "da6daf1a50a5e46d6641408d52227e31e85e46df",
+  "torch": "2ab12fe9660aec04e02ee89fe81baed304a1a1d6",
+  "vcpkg": "e281867ec08bd99a4425bc505a43dff1089c4fef",
+  "compiler": "clang-cl 23.1.5, lld-link, Windows x64 static runtime",
+  "mod_version": "0.1.4",
+  "status": "experimental; live song execution validation pending"
+}

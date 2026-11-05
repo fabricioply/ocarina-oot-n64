@@ -1,0 +1,136 @@
+diff --git a/soh/CMakeLists.txt b/soh/CMakeLists.txt
+index f356d214..2618075d 100644
+--- a/soh/CMakeLists.txt
++++ b/soh/CMakeLists.txt
+@@ -629,7 +629,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+     find_package(Opus CONFIG REQUIRED)
+     link_libraries(Opus::opus)
+     find_package(OpusFile CONFIG REQUIRED)
+-    link_libraries(OpusFile::opusfile CONFIG REQUIRED)
++    link_libraries(OpusFile::opusfile)
+     if(SOH_WINDOWS_64BIT)
+         set(ADDITIONAL_LIBRARY_DEPENDENCIES
+             "libultraship;"
+@@ -803,3 +803,30 @@ wut_create_wuhb(${PROJECT_NAME}
+ INSTALL(FILES ${CMAKE_CURRENT_BINARY_DIR}/soh.rpx ${CMAKE_CURRENT_BINARY_DIR}/soh.wuhb DESTINATION . COMPONENT ship)
+ 
+ endif()
++
++# Local N64 microphone mod; kept separate from the completed OoT3D mods.
++if(WIN32)
++    set(OCARINA_N64_SOURCE_ROOT "${CMAKE_SOURCE_DIR}/../ocarina-oot-n64" CACHE PATH "Local microphone mod")
++    add_subdirectory("${OCARINA_N64_SOURCE_ROOT}/shared/real_instrument" "${CMAKE_BINARY_DIR}/ocarina_core" EXCLUDE_FROM_ALL)
++    target_sources(${PROJECT_NAME} PRIVATE "${OCARINA_N64_SOURCE_ROOT}/src/soh_microphone.cpp")
++    target_include_directories(${PROJECT_NAME} PRIVATE "${OCARINA_N64_SOURCE_ROOT}/src")
++    target_compile_definitions(${PROJECT_NAME} PRIVATE OCARINA_N64_MIC=1)
++    target_link_libraries(${PROJECT_NAME} PRIVATE real_instrument_game_microphone)
++endif()
++
++# clang-cl interprets upstream /Wall as -Weverything, including every imported
++# game/header. Keep normal actionable warnings for this Windows clang build.
++if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND MSVC)
++    target_compile_options(soh PRIVATE -Wno-everything -Wall -Wextra)
++endif()
++
++if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND MSVC)
++    execute_process(COMMAND "${CMAKE_CXX_COMPILER}" --print-resource-dir OUTPUT_VARIABLE OC_CLANG_RESOURCE OUTPUT_STRIP_TRAILING_WHITESPACE)
++    target_link_libraries(soh PRIVATE "${OC_CLANG_RESOURCE}/lib/windows/clang_rt.builtins-x86_64.lib")
++endif()
++if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND MSVC)
++    target_link_options(soh PRIVATE /opt:lldlto=1 /opt:lldltojobs=2 "/lldltocache:${CMAKE_BINARY_DIR}/thinlto-cache")
++endif()
++if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND MSVC)
++    target_link_options(soh PRIVATE /DEBUG:NONE)
++endif()
+diff --git a/soh/assets/tools/torch-cli/main.cpp b/soh/assets/tools/torch-cli/main.cpp
+index bc2a3d14..c6c62e0e 100644
+--- a/soh/assets/tools/torch-cli/main.cpp
++++ b/soh/assets/tools/torch-cli/main.cpp
+@@ -8,6 +8,8 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <filesystem>
++#include <fstream>
++#include <iterator>
+ #include <string>
+ #include <vector>
+ 
+@@ -98,7 +100,10 @@ int main(int argc, char** argv) {
+ 
+     for (const auto& rom : roms) {
+         // A fresh extraction per ROM; torch names the archive from config.yml.
+-        const std::string archive = SohTorch::Extract(rom, src, dest, version, nullptr);
++        std::ifstream input(rom,std::ios::binary);
++        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)),std::istreambuf_iterator<char>());
++        if(!input || bytes.empty()){fprintf(stderr,"cannot read ROM: %s\n",rom.c_str());return 1;}
++        const std::string archive = SohTorch::Extract(std::move(bytes), src, dest, version, nullptr);
+         if (archive.empty()) {
+             fprintf(stderr, "failed to extract %s\n", rom.c_str());
+             return 1;
+diff --git a/soh/soh/OTRGlobals.cpp b/soh/soh/OTRGlobals.cpp
+index 67bd1777..330ce47e 100644
+--- a/soh/soh/OTRGlobals.cpp
++++ b/soh/soh/OTRGlobals.cpp
+@@ -1,4 +1,7 @@
+-﻿#include "OTRGlobals.h"
++#ifdef OCARINA_N64_MIC
++#include "n64_microphone_c.h"
++#endif
++#include "OTRGlobals.h"
+ #include "OTRAudio.h"
+ #include <algorithm>
+ #include <atomic>
+@@ -1098,6 +1101,9 @@ void OTRAudio_Thread() {
+                                            num_audio_samples);
+         }
+ 
++#ifdef OCARINA_N64_MIC
++        if(OcarinaN64_AudioMuted())std::fill_n(audio_buffer,num_audio_samples*NUM_AUDIO_CHANNELS*AUDIO_FRAMES_PER_UPDATE,0);
++#endif
+         AudioPlayer_Play((u8*)audio_buffer,
+                          num_audio_samples * (sizeof(int16_t) * NUM_AUDIO_CHANNELS * AUDIO_FRAMES_PER_UPDATE));
+ 
+diff --git a/soh/soh/SohGui/SohMenuSettings.cpp b/soh/soh/SohGui/SohMenuSettings.cpp
+index 476f99f3..42e8ea94 100644
+--- a/soh/soh/SohGui/SohMenuSettings.cpp
++++ b/soh/soh/SohGui/SohMenuSettings.cpp
+@@ -1,3 +1,6 @@
++#ifdef OCARINA_N64_MIC
++#include "n64_microphone_c.h"
++#endif
+ #include "SohMenu.h"
+ #include "soh/Notification/Notification.h"
+ #include "soh/Enhancements/enhancementTypes.h"
+@@ -324,6 +327,10 @@ void SohMenu::AddMenuSettings() {
+             Audio_SetGameVolume(SEQ_PLAYER_SFX, ((float)CVarGetInteger(CVAR_SETTING("Volume.SFX"), 100) / 100.0f));
+         });
+     AddWidget(path, "Audio API (Needs reload)", WIDGET_AUDIO_BACKEND).RaceDisable(false);
++#ifdef OCARINA_N64_MIC
++    AddWidget(path, "Microfone da Ocarina", WIDGET_BUTTON).RaceDisable(false)
++        .Callback([](WidgetInfo&) { OcarinaN64_ShowSettings(); });
++#endif
+ 
+     // Graphics Settings
+     static int32_t maxFps = 360;
+diff --git a/soh/src/code/padmgr.c b/soh/src/code/padmgr.c
+index 173b0339..ee165856 100644
+--- a/soh/src/code/padmgr.c
++++ b/soh/src/code/padmgr.c
+@@ -1,4 +1,7 @@
+ #include "global.h"
++#ifdef OCARINA_N64_MIC
++#include "n64_microphone_c.h"
++#endif
+ #include "vt.h"
+ #include <string.h>
+ 
+@@ -403,6 +406,9 @@ void PadMgr_RequestPadData(PadMgr* padMgr, Input* inputs, s32 mode) {
+         newInput++;
+     }
+ 
++#ifdef OCARINA_N64_MIC
++    OcarinaN64_InjectPad(inputs, mode);
++#endif
+     PadMgr_UnlockPadData(padMgr);
+ }
+ 
